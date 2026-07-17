@@ -95,6 +95,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     elif text_received == "🎲 معلومة عشوائية":
         fact = random.choice(content.RANDOM_FACTS)
         await update.message.reply_text(f"🎲 *معلومة أنثروبولوجية:*\n\n{fact}", parse_mode='Markdown', reply_markup=get_reply_keyboard(current_opened))
+
     elif text_received == "📊 حالة القناة والجدولة":
         stats_text = (
             f"📊 *حالة النظام والربط:*\n\n"
@@ -123,21 +124,22 @@ def main():
         print("خطأ: يرجى إعداد متغير البيئة TELEGRAM_TOKEN")
         return
 
-    # تم بناء التطبيق وتجاوز مشكلة الـ weak reference بتهيئة صريحة للـ job_queue
+    # بناء التطبيق مع تفعيل كافة الإضافات والـ Rate Limiter بنجاح
     application = ApplicationBuilder().token(TOKEN).rate_limiter(AIORateLimiter()).build()
     
-    # ربط وتثبيت المواعيد
+    # ربط وتثبيت مواعيد الجدولة اليومية
     application.job_queue.run_daily(send_daily_fact, time=datetime.time(hour=9, minute=0, second=0))
     application.job_queue.run_daily(send_daily_fact, time=datetime.time(hour=15, minute=0, second=0))
     application.job_queue.run_daily(send_daily_fact, time=datetime.time(hour=21, minute=0, second=0))
 
-    # إضافة المعالجات
+    # إضافة معالجات الأوامر والرسائل
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("post", test_post))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 البوت مستقر تماماً ويعمل...")
+    print("🚀 البوت مستقر تماماً ويعمل بنظام الجدولة على ريلواي...")
     application.run_polling()
 
 if __name__ == '__main__':
     main()
+                    
