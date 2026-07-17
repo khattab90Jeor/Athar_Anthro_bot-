@@ -5,16 +5,14 @@ import random
 import datetime
 from telegram import ReplyKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import AIORateLimiter
 
 # استيراد المحتوى
 import content
 
 TOKEN = os.getenv("TELEGRAM_TOKEN", "ضع_التوكن_هنا_إذا_كنت_تجرب_على_الحاسوب_محليا")
-
-# 📢 تم تحديث معرف القناة الجديد والمطلوب هنا بنجاح
 CHANNEL_USERNAME = "@Athar_Anthro"
 
-# دالة بناء الأزرار العادية داخل حقل الكتابة
 def get_reply_keyboard(opened_section=None):
     btn_cultural = "👇 قسم الثقافي" if opened_section == "cultural" else "📁 علم الإنسان الثقافي"
     btn_biological = "👇 قسم الحيوي" if opened_section == "biological" else "🧬 علم الإنسان الحيوي"
@@ -40,7 +38,6 @@ def get_reply_keyboard(opened_section=None):
 
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# أمر البداية /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data['opened_section'] = None
     welcome_text = (
@@ -52,7 +49,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(welcome_text, parse_mode='Markdown', reply_markup=get_reply_keyboard())
 
-# الأمر التجريبي /post للتأكد من النشر
 async def test_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     fact = random.choice(content.RANDOM_FACTS)
     test_text = (
@@ -62,11 +58,10 @@ async def test_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     try:
         await context.bot.send_message(chat_id=CHANNEL_USERNAME, text=test_text, parse_mode='Markdown')
-        await update.message.reply_text(f"✅ تم إرسال المنشور التجريبي بنجاح إلى القناة: {CHANNEL_USERNAME}\nاذهب إلى القناة لتتحقق منه!")
+        await update.message.reply_text(f"✅ تم إرسال المنشور التجريبي بنجاح إلى القناة: {CHANNEL_USERNAME}")
     except Exception as e:
-        await update.message.reply_text(f"❌ فشل النشر! تأكد من أنك قمت بإضافة البوت كمشرف داخل القناة.\n\nتفاصيل الخطأ: {e}")
+        await update.message.reply_text(f"❌ فشل النشر! تأكد من أن البوت مشرف بالقناة.\n\nالتفاصيل: {e}")
 
-# معالج رسائل الأزرار
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text_received = update.message.text
     current_opened = context.user_data.get('opened_section', None)
@@ -111,7 +106,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         await update.message.reply_text("الرجاء الضغط على الأزرار السفلية الظاهرة لديك للتصفح الفرعي.", reply_markup=get_reply_keyboard(current_opened))
 
-# دالة النشر المجدول التلقائي
 async def send_daily_fact(context: ContextTypes.DEFAULT_TYPE) -> None:
     fact = random.choice(content.RANDOM_FACTS)
     broadcast_text = (
@@ -122,29 +116,28 @@ async def send_daily_fact(context: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await context.bot.send_message(chat_id=CHANNEL_USERNAME, text=broadcast_text, parse_mode='Markdown')
     except Exception as e:
-        print(f"خطأ أثناء النشر في القناة: {e}")
+        print(f"خطأ أثناء النشر: {e}")
 
 def main():
     if not TOKEN or TOKEN == "ضع_التوكن_هنا_إذا_كنت_تجرب_على_الحاسوب_محليا":
         print("خطأ: يرجى إعداد متغير البيئة TELEGRAM_TOKEN")
         return
 
-    application = ApplicationBuilder().token(TOKEN).build()
-    job_queue = application.job_queue
+    # تم بناء التطبيق وتجاوز مشكلة الـ weak reference بتهيئة صريحة للـ job_queue
+    application = ApplicationBuilder().token(TOKEN).rate_limiter(AIORateLimiter()).build()
+    
+    # ربط وتثبيت المواعيد
+    application.job_queue.run_daily(send_daily_fact, time=datetime.time(hour=9, minute=0, second=0))
+    application.job_queue.run_daily(send_daily_fact, time=datetime.time(hour=15, minute=0, second=0))
+    application.job_queue.run_daily(send_daily_fact, time=datetime.time(hour=21, minute=0, second=0))
 
-    # إعداد مواعيد النشر الثلاثة يومياً
-    job_queue.run_daily(send_daily_fact, time=datetime.time(hour=9, minute=0, second=0))
-    job_queue.run_daily(send_daily_fact, time=datetime.time(hour=15, minute=0, second=0))
-    job_queue.run_daily(send_daily_fact, time=datetime.time(hour=21, minute=0, second=0))
-
-    # تسجيل الأوامر والرسائل
+    # إضافة المعالجات
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("post", test_post))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 البوت والجدولة يعملان الآن بنجاح...")
+    print("🚀 البوت مستقر تماماً ويعمل...")
     application.run_polling()
 
 if __name__ == '__main__':
     main()
-    
