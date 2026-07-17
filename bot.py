@@ -32,13 +32,13 @@ CHANNEL_USERNAME = "@Athar_Anthro"
 # ── قنوات وبوتات الاشتراك الإجباري ──────────────────────────────────────────
 # القنوات التي يمكن التحقق منها برمجياً
 REQUIRED_CHANNELS = [
-    {"username": "@Athar_Anthro",       "name": "📚 قناة أثر الأنثروبولوجيا",  "url": "https://t.me/Athar_Anthro"},
-    {"username": "@Athar_Dz_Islamic",   "name": "🕌 قناة أثر الإسلامية",        "url": "https://t.me/Athar_Dz_Islamic"},
+    {"username": "@Athar_Anthro",     "name": "📚 قناة أثر الأنثروبولوجيا",              "url": "https://t.me/Athar_Anthro"},
+    {"username": "@Athar_Dz_Islamic", "name": "🌹 قناة رَيْحَانَةُ المَغْرِبِ الأَوْسَطِ", "url": "https://t.me/Athar_Dz_Islamic"},
 ]
 # البوتات (لا يمكن التحقق منها، نضع أزرار فقط)
 REQUIRED_BOTS = [
-    {"name": "🌙 بوت الذبح والحنين",    "url": "https://t.me/Jeor_dhabh_h_a_n_i_n_bot"},
-    {"name": "🕊️ بوت المهاجرة لله",    "url": "https://t.me/Muhajira_for_Allah_bot"},
+    {"name": "📖 بوت علوم شرعية للأخوة والأخوات", "url": "https://t.me/Jeor_dhabh_h_a_n_i_n_bot"},
+    {"name": "🕌 بوت القرآن الكريم",               "url": "https://t.me/Muhajira_for_Allah_bot"},
 ]
 
 # ── جلب صورة من ويكيبيديا (async-safe عبر thread) ───────────────────────────
