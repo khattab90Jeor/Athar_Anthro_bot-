@@ -26,36 +26,40 @@ from telegram.ext import (
 TOKEN           = os.getenv("TELEGRAM_TOKEN", "")
 CHANNEL_USERNAME = "@Athar_Anthro"
 
-# ── جلب صورة من ويكيبيديا ────────────────────────────────────────────────────
-def fetch_wiki_image(wiki_title: str) -> str | None:
-    """يجلب رابط صورة مصغّرة من ويكيبيديا الإنجليزية."""
+# ── جلب صورة من ويكيبيديا (async-safe عبر thread) ───────────────────────────
+def _sync_fetch_wiki_image(wiki_title: str) -> str | None:
+    """[sync] يجلب رابط صورة من ويكيبيديا."""
     try:
         title_encoded = urllib.parse.quote(wiki_title.replace(" ", "_"))
-        url = (
-            f"https://en.wikipedia.org/api/rest_v1/page/summary/{title_encoded}"
-        )
+        url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{title_encoded}"
         resp = requests.get(url, timeout=8, headers={"User-Agent": "AtharAnthroBot/1.0"})
         if resp.status_code == 200:
-            data = resp.json()
-            thumbnail = data.get("thumbnail", {})
+            thumbnail = resp.json().get("thumbnail", {})
             src = thumbnail.get("source", "")
             if src:
-                # نأخذ صورة بجودة أعلى قدر الإمكان
                 src = src.replace("/320px-", "/800px-").replace("/200px-", "/800px-")
                 return src
     except Exception as e:
-        print(f"[wiki_image] خطأ: {e}")
+        print(f"[wiki_image] {e}")
     return None
 
-def fetch_image_bytes(url: str) -> bytes | None:
-    """يحمّل بايتات الصورة من رابطها."""
+def _sync_fetch_image_bytes(url: str) -> bytes | None:
+    """[sync] يحمّل بايتات الصورة."""
     try:
         resp = requests.get(url, timeout=10, headers={"User-Agent": "AtharAnthroBot/1.0"})
-        if resp.status_code == 200:
+        if resp.status_code == 200 and len(resp.content) < 9 * 1024 * 1024:
             return resp.content
     except Exception as e:
-        print(f"[fetch_image] خطأ: {e}")
+        print(f"[fetch_image] {e}")
     return None
+
+async def fetch_wiki_image_async(wiki_title: str) -> str | None:
+    """[async] يستدعي جلب الصورة في thread منفصل حتى لا يُجمّد event loop."""
+    return await asyncio.to_thread(_sync_fetch_wiki_image, wiki_title)
+
+async def fetch_image_bytes_async(url: str) -> bytes | None:
+    """[async] يستدعي تحميل الصورة في thread منفصل."""
+    return await asyncio.to_thread(_sync_fetch_image_bytes, url)
 
 # ── بناء لوحة الأزرار ─────────────────────────────────────────────────────────
 def get_reply_keyboard(opened_section=None):
@@ -93,16 +97,13 @@ async def send_rich_post(bot, post: dict, extra_header: str = "") -> bool:
     text = extra_header + post["text"]
     wiki_title = post.get("wiki_title", "")
 
-    # — جلب الصورة —
+    # — جلب الصورة في thread منفصل (async-safe) —
     img_bytes = None
     try:
         if wiki_title:
-            image_url = fetch_wiki_image(wiki_title)
+            image_url = await fetch_wiki_image_async(wiki_title)
             if image_url:
-                img_bytes = fetch_image_bytes(image_url)
-                # Telegram يرفض الصور فوق 10 ميغا
-                if img_bytes and len(img_bytes) > 9 * 1024 * 1024:
-                    img_bytes = None
+                img_bytes = await fetch_image_bytes_async(image_url)
     except Exception as e:
         print(f"[image_fetch] {e}")
         img_bytes = None
@@ -235,13 +236,76 @@ async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """أمر /post — ينشر فوراً في القناة بصورة."""
     await update.message.reply_text("⏳ جاري النشر في القناة...")
     post = make_post_with_footer(random.choice(content.DAILY_POSTS), MORNING_HEADER)
-    ok = await send_rich_post(context.bot, post)
-    if ok:
-        await update.message.reply_text(f"✅ تم النشر بنجاح في {CHANNEL_USERNAME}!")
-    else:
-        await update.message.reply_text(
-            f"❌ فشل النشر. تأكد أن البوت مضاف كمشرف في {CHANNEL_USERNAME} بصلاحية نشر المنشورات."
+
+    last_error = None
+    text      = post["text"]
+    wiki_title = post.get("wiki_title", "")
+    caption   = text[:1024]
+
+    # جلب الصورة
+    img_bytes = None
+    try:
+        if wiki_title:
+            image_url = await fetch_wiki_image_async(wiki_title)
+            if image_url:
+                img_bytes = await fetch_image_bytes_async(image_url)
+    except Exception as e:
+        last_error = f"جلب الصورة: {e}"
+        print(f"[post_now image] {e}")
+
+    # محاولة 1: صورة + Markdown
+    if img_bytes:
+        try:
+            await context.bot.send_photo(
+                chat_id=CHANNEL_USERNAME, photo=img_bytes,
+                caption=caption, parse_mode="Markdown"
+            )
+            await update.message.reply_text(f"✅ تم النشر بصورة في {CHANNEL_USERNAME}!")
+            return
+        except Exception as e:
+            last_error = f"صورة+md: {e}"
+            print(f"[post_now try1] {e}")
+
+    # محاولة 2: صورة بدون Markdown
+    if img_bytes:
+        try:
+            await context.bot.send_photo(
+                chat_id=CHANNEL_USERNAME, photo=img_bytes,
+                caption=_strip_markdown(caption)
+            )
+            await update.message.reply_text(f"✅ تم النشر بصورة (بدون تنسيق) في {CHANNEL_USERNAME}!")
+            return
+        except Exception as e:
+            last_error = f"صورة: {e}"
+            print(f"[post_now try2] {e}")
+
+    # محاولة 3: نص + Markdown
+    try:
+        await context.bot.send_message(
+            chat_id=CHANNEL_USERNAME, text=text, parse_mode="Markdown"
         )
+        await update.message.reply_text(f"✅ تم النشر (نص) في {CHANNEL_USERNAME}!")
+        return
+    except Exception as e:
+        last_error = f"نص+md: {e}"
+        print(f"[post_now try3] {e}")
+
+    # محاولة 4: نص عادي
+    try:
+        await context.bot.send_message(
+            chat_id=CHANNEL_USERNAME, text=_strip_markdown(text)
+        )
+        await update.message.reply_text(f"✅ تم النشر (نص عادي) في {CHANNEL_USERNAME}!")
+        return
+    except Exception as e:
+        last_error = f"نص عادي: {e}"
+        print(f"[post_now try4] {e}")
+
+    await update.message.reply_text(
+        f"❌ فشل النشر بعد 4 محاولات.\n"
+        f"آخر خطأ: `{last_error}`",
+        parse_mode="Markdown"
+    )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text_received = update.message.text
