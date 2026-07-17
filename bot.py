@@ -13,7 +13,7 @@ import content
 TOKEN = os.getenv("TELEGRAM_TOKEN", "ضع_التوكن_هنا_إذا_كنت_تجرب_على_الحاسوب_محليا")
 
 # 📢 تم ربط البوت مباشرة بقناة زوجتك الفاضلة هنا
-CHANNEL_USERNAME = "@Athar_Dz_Islamic"
+CHANNEL_USERNAME = "@Athar_Anthro"
 
 # دالة بناء الأزرار العادية داخل حقل الكتابة (تفتح وتختفي شجرياً)
 def get_reply_keyboard(opened_section=None):
