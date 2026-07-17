@@ -4,18 +4,17 @@ import os
 import random
 import datetime
 from telegram import ReplyKeyboardMarkup, Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-# axjdhv_hglpj,n
+# استيراد المحتوى
 import content
 
-# qvh_m hgj,;k fHlhk lk Railway
 TOKEN = os.getenv("TELEGRAM_TOKEN", "ضع_التوكن_هنا_إذا_كنت_تجرب_على_الحاسوب_محليا")
 
-# 📢 jl vf' hgf,j lfhavm frkhm .,j; hgthqgl ikh
+# 📢 تم تحديث معرف القناة الجديد والمطلوب هنا بنجاح
 CHANNEL_USERNAME = "@Athar_Anthro"
 
-# phgm fkh_ hgH.vhv hgusgdm dhog prg hg;jhfm
+# دالة بناء الأزرار العادية داخل حقل الكتابة
 def get_reply_keyboard(opened_section=None):
     btn_cultural = "👇 قسم الثقافي" if opened_section == "cultural" else "📁 علم الإنسان الثقافي"
     btn_biological = "👇 قسم الحيوي" if opened_section == "biological" else "🧬 علم الإنسان الحيوي"
@@ -41,7 +40,7 @@ def get_reply_keyboard(opened_section=None):
 
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
-# Hlvh hgfkhdm /start
+# أمر البداية /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data['opened_section'] = None
     welcome_text = (
@@ -53,7 +52,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
     await update.message.reply_text(welcome_text, parse_mode='Markdown', reply_markup=get_reply_keyboard())
 
-# 🧪 الأمر الجديد /post للتأكد من النشر داخل القناة فوراً
+# الأمر التجريبي /post للتأكد من النشر
 async def test_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     fact = random.choice(content.RANDOM_FACTS)
     test_text = (
@@ -62,14 +61,12 @@ async def test_post(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"✨ البوت يعمل بنجاح ومستعد للنشر المجدول تلقائياً!"
     )
     try:
-        # إرسال الرسالة للقناة مباشرة
         await context.bot.send_message(chat_id=CHANNEL_USERNAME, text=test_text, parse_mode='Markdown')
-        # إرسال رسالة تأكيد للمستخدم داخل البوت
         await update.message.reply_text(f"✅ تم إرسال المنشور التجريبي بنجاح إلى القناة: {CHANNEL_USERNAME}\nاذهب إلى القناة لتتحقق منه!")
     except Exception as e:
-        await update.message.reply_text(f"❌ فشل النشر! تأكد من أنك قمت بإضافة البوت كمشرف (Admin) داخل القناة ومنحه صلاحية النشر.\n\nتفاصيل الخطأ: {e}")
+        await update.message.reply_text(f"❌ فشل النشر! تأكد من أنك قمت بإضافة البوت كمشرف داخل القناة.\n\nتفاصيل الخطأ: {e}")
 
-# luhg_ vsh_g hgH.vhv hgusgdm
+# معالج رسائل الأزرار
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     text_received = update.message.text
     current_opened = context.user_data.get('opened_section', None)
@@ -114,7 +111,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         await update.message.reply_text("الرجاء الضغط على الأزرار السفلية الظاهرة لديك للتصفح الفرعي.", reply_markup=get_reply_keyboard(current_opened))
 
-# 📅 dhgm hgkhv hgl_d,g hgjrhdd fhog hg;khm lfhvhm
+# دالة النشر المجدول التلقائي
 async def send_daily_fact(context: ContextTypes.DEFAULT_TYPE) -> None:
     fact = random.choice(content.RANDOM_FACTS)
     broadcast_text = (
@@ -132,17 +129,17 @@ def main():
         print("خطأ: يرجى إعداد متغير البيئة TELEGRAM_TOKEN")
         return
 
-    application = Application.builder().token(TOKEN).build()
+    application = ApplicationBuilder().token(TOKEN).build()
     job_queue = application.job_queue
 
-    # hgj_d,g 3 lvhj d,ldh
+    # إعداد مواعيد النشر الثلاثة يومياً
     job_queue.run_daily(send_daily_fact, time=datetime.time(hour=9, minute=0, second=0))
     job_queue.run_daily(send_daily_fact, time=datetime.time(hour=15, minute=0, second=0))
     job_queue.run_daily(send_daily_fact, time=datetime.time(hour=21, minute=0, second=0))
 
-    # j_dg hgH,hlv
+    # تسجيل الأوامر والرسائل
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("post", test_post)) # تسجيل الأمر التجريبي الجديد
+    application.add_handler(CommandHandler("post", test_post))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("🚀 البوت والجدولة يعملان الآن بنجاح...")
@@ -150,3 +147,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    
