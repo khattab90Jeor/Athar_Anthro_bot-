@@ -305,10 +305,70 @@ def get_reply_keyboard(opened_section=None):
 def _strip_markdown(text: str) -> str:
     return text.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
 
-async def send_rich_post(bot, post: dict, extra_header: str = "") -> bool:
+# ── ذاكرة معرّف مجموعة النقاش (يُحدَّث عند أول نشر) ─────────────────────────
+_discussion_group_id: int | None = None
+
+async def get_discussion_group_id(bot) -> int | None:
+    """يجلب ويخزّن معرّف مجموعة النقاش المرتبطة بالقناة."""
+    global _discussion_group_id
+    if _discussion_group_id is not None:
+        return _discussion_group_id
+    try:
+        chat = await bot.get_chat(CHANNEL_USERNAME)
+        linked = getattr(chat, "linked_chat_id", None)
+        if linked:
+            _discussion_group_id = linked
+            print(f"[discussion_group] ✅ معرّف مجموعة النقاش: {linked}")
+        else:
+            print("[discussion_group] ⚠️ القناة ليس لها مجموعة نقاش مرتبطة")
+    except Exception as e:
+        print(f"[discussion_group] ❌ {e}")
+    return _discussion_group_id
+
+
+async def post_groq_comment(bot, channel_message_id: int, post_text: str = "") -> None:
+    """
+    ينشر تعليقاً ذكياً عبر Groq في مجموعة النقاش المرتبطة بالقناة،
+    مربوطاً بالمنشور بـ reply_to_message_id.
+    """
+    if not GROQ_AVAILABLE or not GROQ_API_KEY:
+        return
+
+    group_id = await get_discussion_group_id(bot)
+    if not group_id:
+        print("[groq_comment] لا توجد مجموعة نقاش — تم التخطي")
+        return
+
+    comment_text = await asyncio.to_thread(_sync_groq_generate_comment, post_text or "منشور أنثروبولوجي")
+    if not comment_text:
+        print("[groq_comment] ❌ Groq لم يُولّد تعليقاً")
+        return
+
+    try:
+        await bot.send_message(
+            chat_id=group_id,
+            text=comment_text,
+            reply_to_message_id=channel_message_id,
+            parse_mode="Markdown",
+        )
+        print(f"[groq_comment] ✅ تعليق نُشر على المنشور {channel_message_id}")
+    except Exception as e:
+        # محاولة بدون Markdown
+        try:
+            await bot.send_message(
+                chat_id=group_id,
+                text=_strip_markdown(comment_text),
+                reply_to_message_id=channel_message_id,
+            )
+            print(f"[groq_comment] ✅ تعليق نُشر (بدون Markdown) على {channel_message_id}")
+        except Exception as e2:
+            print(f"[groq_comment] ❌ فشل: {e2}")
+
+
+async def send_rich_post(bot, post: dict, extra_header: str = ""):
     """
     يرسل منشوراً كاملاً (نص + صورة) إلى القناة.
-    يجرب عدة طرق تدريجياً حتى ينجح أحدها.
+    يُعيد كائن الرسالة المُرسَلة أو None عند الفشل.
     """
     text = extra_header + post["text"]
     wiki_title = post.get("wiki_title", "")
@@ -327,33 +387,33 @@ async def send_rich_post(bot, post: dict, extra_header: str = "") -> bool:
 
     if img_bytes:
         try:
-            await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=img_bytes,
-                                 caption=caption, parse_mode="Markdown")
-            return True
+            msg = await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=img_bytes,
+                                       caption=caption, parse_mode="Markdown")
+            return msg
         except Exception as e:
             print(f"[try1 photo+md] {e}")
 
     if img_bytes:
         try:
-            await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=img_bytes,
-                                 caption=_strip_markdown(caption))
-            return True
+            msg = await bot.send_photo(chat_id=CHANNEL_USERNAME, photo=img_bytes,
+                                       caption=_strip_markdown(caption))
+            return msg
         except Exception as e:
             print(f"[try2 photo] {e}")
 
     try:
-        await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, parse_mode="Markdown")
-        return True
+        msg = await bot.send_message(chat_id=CHANNEL_USERNAME, text=text, parse_mode="Markdown")
+        return msg
     except Exception as e:
         print(f"[try3 text+md] {e}")
 
     try:
-        await bot.send_message(chat_id=CHANNEL_USERNAME, text=_strip_markdown(text))
-        return True
+        msg = await bot.send_message(chat_id=CHANNEL_USERNAME, text=_strip_markdown(text))
+        return msg
     except Exception as e:
         print(f"[try4 plain] {e}")
 
-    return False
+    return None
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ── قوالب المنشورات اليومية الثلاثة ─────────────────────────────────────────
@@ -387,13 +447,15 @@ def make_post_with_footer(base_post: dict, header: str) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def morning_post(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """منشور الصباح 9:00 جزائر — معلومة + صورة."""
+    """منشور الصباح 9:00 جزائر — معلومة + صورة + تعليق AI."""
     post = make_post_with_footer(random.choice(content.DAILY_POSTS), MORNING_HEADER)
-    ok = await send_rich_post(context.bot, post)
-    print(f"[morning_post] {'✅ نُشر' if ok else '❌ فشل'}")
+    msg = await send_rich_post(context.bot, post)
+    print(f"[morning_post] {'✅ نُشر' if msg else '❌ فشل'}")
+    if msg:
+        await post_groq_comment(context.bot, msg.message_id, post["text"])
 
 async def noon_post(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """منشور الظهر 15:00 جزائر — اقتباس علمي."""
+    """منشور الظهر 15:00 جزائر — اقتباس علمي + تعليق AI."""
     quote_obj = random.choice(content.ANTHROPOLOGY_QUOTES)
     quote_text = (
         NOON_HEADER
@@ -401,20 +463,25 @@ async def noon_post(context: ContextTypes.DEFAULT_TYPE) -> None:
         + f"✍️ _{quote_obj['author']}_"
         + FOOTER
     )
+    msg = None
     try:
-        await context.bot.send_message(chat_id=CHANNEL_USERNAME,
-                                       text=quote_text, parse_mode="Markdown")
+        msg = await context.bot.send_message(chat_id=CHANNEL_USERNAME,
+                                             text=quote_text, parse_mode="Markdown")
         print("[noon_post] ✅ اقتباس نُشر")
     except Exception as e:
         print(f"[noon_post] ❌ {e}")
+    if msg:
+        await post_groq_comment(context.bot, msg.message_id, quote_text)
 
 async def evening_post(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """منشور المساء 21:00 جزائر — معلومة + صورة (مختلفة عن الصباح)."""
+    """منشور المساء 21:00 جزائر — معلومة + صورة + تعليق AI."""
     seed_index = (datetime.datetime.now().day + 13) % len(content.DAILY_POSTS)
     post = content.DAILY_POSTS[seed_index]
     post = make_post_with_footer(post, EVENING_HEADER)
-    ok = await send_rich_post(context.bot, post)
-    print(f"[evening_post] {'✅ نُشر' if ok else '❌ فشل'}")
+    msg = await send_rich_post(context.bot, post)
+    print(f"[evening_post] {'✅ نُشر' if msg else '❌ فشل'}")
+    if msg:
+        await post_groq_comment(context.bot, msg.message_id, post["text"])
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ── جدولة الذكاء الاصطناعي — مقالات Phys.org كل ساعة ────────────────────────
@@ -473,8 +540,9 @@ async def scrape_and_publish_ai_article(context: ContextTypes.DEFAULT_TYPE) -> N
     caption   = full_text[:1024]
 
     # محاولة النشر مع الصورة الحصرية للمقال
-    published = False
-    image_url = article.get("image_url")
+    published  = False
+    sent_msg   = None
+    image_url  = article.get("image_url")
 
     if image_url:
         img_bytes = await fetch_image_bytes_async(image_url)
@@ -482,7 +550,7 @@ async def scrape_and_publish_ai_article(context: ContextTypes.DEFAULT_TYPE) -> N
         if img_bytes:
             # محاولة 1: صورة + Markdown
             try:
-                await context.bot.send_photo(
+                sent_msg  = await context.bot.send_photo(
                     chat_id=CHANNEL_USERNAME, photo=img_bytes,
                     caption=caption, parse_mode="Markdown"
                 )
@@ -494,7 +562,7 @@ async def scrape_and_publish_ai_article(context: ContextTypes.DEFAULT_TYPE) -> N
             # محاولة 2: صورة بدون Markdown
             if not published:
                 try:
-                    await context.bot.send_photo(
+                    sent_msg  = await context.bot.send_photo(
                         chat_id=CHANNEL_USERNAME, photo=img_bytes,
                         caption=_strip_markdown(caption)
                     )
@@ -506,7 +574,7 @@ async def scrape_and_publish_ai_article(context: ContextTypes.DEFAULT_TYPE) -> N
     # محاولة 3: نص فقط + Markdown
     if not published:
         try:
-            await context.bot.send_message(
+            sent_msg  = await context.bot.send_message(
                 chat_id=CHANNEL_USERNAME, text=full_text, parse_mode="Markdown"
             )
             published = True
@@ -517,7 +585,7 @@ async def scrape_and_publish_ai_article(context: ContextTypes.DEFAULT_TYPE) -> N
     # محاولة 4: نص عادي
     if not published:
         try:
-            await context.bot.send_message(
+            sent_msg  = await context.bot.send_message(
                 chat_id=CHANNEL_USERNAME, text=_strip_markdown(full_text)
             )
             published = True
@@ -527,6 +595,9 @@ async def scrape_and_publish_ai_article(context: ContextTypes.DEFAULT_TYPE) -> N
 
     if published:
         _last_published_article_url = article["url"]
+        # تعليق AI فوري بعد النشر
+        if sent_msg:
+            await post_groq_comment(context.bot, sent_msg.message_id, arabic_text)
     else:
         print("[ai_scraper] ❌ فشل النشر بعد 4 محاولات")
 
@@ -708,42 +779,47 @@ async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         last_error = f"جلب الصورة: {e}"
         print(f"[post_now image] {e}")
 
+    sent_msg = None
+
     if img_bytes:
         try:
-            await context.bot.send_photo(chat_id=CHANNEL_USERNAME, photo=img_bytes,
-                                         caption=caption, parse_mode="Markdown")
+            sent_msg = await context.bot.send_photo(chat_id=CHANNEL_USERNAME, photo=img_bytes,
+                                                    caption=caption, parse_mode="Markdown")
             await update.message.reply_text(f"✅ تم النشر بصورة في {CHANNEL_USERNAME}!")
-            return
         except Exception as e:
             last_error = f"صورة+md: {e}"
 
-    if img_bytes:
+    if not sent_msg and img_bytes:
         try:
-            await context.bot.send_photo(chat_id=CHANNEL_USERNAME, photo=img_bytes,
-                                         caption=_strip_markdown(caption))
+            sent_msg = await context.bot.send_photo(chat_id=CHANNEL_USERNAME, photo=img_bytes,
+                                                    caption=_strip_markdown(caption))
             await update.message.reply_text(f"✅ تم النشر بصورة (بدون تنسيق) في {CHANNEL_USERNAME}!")
-            return
         except Exception as e:
             last_error = f"صورة: {e}"
 
-    try:
-        await context.bot.send_message(chat_id=CHANNEL_USERNAME, text=text, parse_mode="Markdown")
-        await update.message.reply_text(f"✅ تم النشر (نص) في {CHANNEL_USERNAME}!")
-        return
-    except Exception as e:
-        last_error = f"نص+md: {e}"
+    if not sent_msg:
+        try:
+            sent_msg = await context.bot.send_message(chat_id=CHANNEL_USERNAME, text=text,
+                                                      parse_mode="Markdown")
+            await update.message.reply_text(f"✅ تم النشر (نص) في {CHANNEL_USERNAME}!")
+        except Exception as e:
+            last_error = f"نص+md: {e}"
 
-    try:
-        await context.bot.send_message(chat_id=CHANNEL_USERNAME, text=_strip_markdown(text))
-        await update.message.reply_text(f"✅ تم النشر (نص عادي) في {CHANNEL_USERNAME}!")
-        return
-    except Exception as e:
-        last_error = f"نص عادي: {e}"
+    if not sent_msg:
+        try:
+            sent_msg = await context.bot.send_message(chat_id=CHANNEL_USERNAME,
+                                                      text=_strip_markdown(text))
+            await update.message.reply_text(f"✅ تم النشر (نص عادي) في {CHANNEL_USERNAME}!")
+        except Exception as e:
+            last_error = f"نص عادي: {e}"
 
-    await update.message.reply_text(
-        f"❌ فشل النشر بعد 4 محاولات.\nآخر خطأ: `{last_error}`",
-        parse_mode="Markdown"
-    )
+    if sent_msg:
+        await post_groq_comment(context.bot, sent_msg.message_id, text)
+    else:
+        await update.message.reply_text(
+            f"❌ فشل النشر بعد 4 محاولات.\nآخر خطأ: `{last_error}`",
+            parse_mode="Markdown"
+        )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
@@ -852,14 +928,14 @@ def main():
     jq.run_daily(noon_post,    time=datetime.time(hour=14, minute=0))   # 15:00 جزائر
     jq.run_daily(evening_post, time=datetime.time(hour=20, minute=0))   # 21:00 جزائر
 
-    # ── الجدولة المستقلة للذكاء الاصطناعي — كل ساعة (فقط إذا توفرت المكتبات) ──
+    # ── الجدولة المستقلة للذكاء الاصطناعي — كل 30 دقيقة (فقط إذا توفرت المكتبات) ──
     if ai_ready:
         jq.run_repeating(
             scrape_and_publish_ai_article,
-            interval=3600,   # كل 3600 ثانية = ساعة واحدة
+            interval=1800,   # كل 1800 ثانية = 30 دقيقة
             first=120,       # تأخير دقيقتين قبل أول تشغيل عند إقلاع البوت
         )
-        print("🤖 جدولة AI مفعّلة — مقال Phys.org كل ساعة")
+        print("🤖 جدولة AI مفعّلة — مقال Phys.org كل 30 دقيقة")
 
     # ── تسجيل المعالجات ──
     app.add_handler(CommandHandler("start", start))
@@ -875,8 +951,9 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("🚀 البوت يعمل — قناة @Athar_Anthro جاهزة 💚")
-    print(f"📅 الجدولة: 09:00 | 15:00 | 21:00 جزائر{'+ AI كل ساعة' if ai_ready else ''}")
-    app.run_polling(drop_pending_updates=True)
+    print(f"📅 الجدولة: 09:00 | 15:00 | 21:00 جزائر{' + AI كل 30 دقيقة' if ai_ready else ''}")
+    # drop_pending_updates=False حتى لا يُهدَر أمر /start عند إعادة التشغيل
+    app.run_polling(drop_pending_updates=False)
 
 if __name__ == "__main__":
     main()
