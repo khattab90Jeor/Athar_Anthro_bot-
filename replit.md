@@ -2,22 +2,20 @@
 
 بوت تيلجرام متخصص في الأنثروبولوجيا (العالمية والجزائرية)، مبني بـ Python.
 
-## كيفية التشغيل
+## سير العمل
 
-### على Railway
+- **ريبليت** → تعديل الكود وإضافة المزايا فقط.
+- **Railway** → التشغيل الدائم للبوت.
+
+## النشر على Railway
+
 1. اربط هذا المستودع بـ Railway.
 2. أضف متغير البيئة `TELEGRAM_TOKEN` في إعدادات Railway.
 3. يتعرف Railway تلقائياً على `Procfile` ويشغّل `python bot.py`.
 
-### محلياً
-```bash
-pip install -r requirements.txt
-TELEGRAM_TOKEN=your_token python bot.py
-```
-
 ## متغيرات البيئة المطلوبة
 
-| المتغير | الوصف |
+| المتغير | الوصر |
 |---------|-------|
 | `TELEGRAM_TOKEN` | توكن البوت من BotFather |
 
@@ -30,4 +28,4 @@ TELEGRAM_TOKEN=your_token python bot.py
 - `requirements.txt` — المكتبات المطلوبة
 
 ## User preferences
-- التشغيل الدائم يكون على Railway
+- التشغيل الدائم يكون على Railway؛ ريبليت يُستخدم فقط لتعديل الكود.
