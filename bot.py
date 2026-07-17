@@ -241,16 +241,26 @@ async def evening_post(context: ContextTypes.DEFAULT_TYPE) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def is_subscribed(bot, user_id: int, channel_username: str) -> bool:
-    """يتحقق إذا كان المستخدم مشتركاً في القناة المطلوبة."""
+    """
+    يتحقق إذا كان المستخدم مشتركاً في القناة.
+    شروط النجاح:
+      - البوت مشرف في القناة
+      - المستخدم عضو (not left/kicked/banned)
+    إذا تعذّر التحقق (خطأ API) → نعتبره مشتركاً حتى لا نحجب أحداً بسبب خطأ تقني.
+    """
     try:
         member = await bot.get_chat_member(chat_id=channel_username, user_id=user_id)
-        return member.status not in ("left", "kicked", "banned")
+        status = member.status
+        print(f"[is_subscribed] {channel_username} | user={user_id} | status={status}")
+        return status not in ("left", "kicked", "banned")
     except Exception as e:
-        print(f"[is_subscribed] {channel_username}: {e}")
-        return False  # نعتبره غير مشترك عند الخطأ
+        err = str(e)
+        print(f"[is_subscribed] {channel_username} | خطأ: {err}")
+        # إذا البوت غير مشرف في القناة أو لا يمكنه التحقق → نسمح بالدخول
+        return True
 
 async def check_all_subscriptions(bot, user_id: int) -> list[dict]:
-    """يعيد قائمة القنوات التي لم يشترك فيها المستخدم بعد."""
+    """يعيد قائمة القنوات التي تأكّدنا أن المستخدم لم يشترك فيها."""
     not_joined = []
     for ch in REQUIRED_CHANNELS:
         if not await is_subscribed(bot, user_id, ch["username"]):
