@@ -328,22 +328,30 @@ async def get_discussion_group_id(bot) -> int | None:
 
 async def post_groq_comment(bot, channel_message_id: int, post_text: str = "") -> None:
     """
-    ينشر تعليقاً ذكياً عبر Groq في مجموعة النقاش المرتبطة بالقناة،
-    مربوطاً بالمنشور بـ reply_to_message_id.
+    ينشر تعليقاً ذكياً عبر Groq في مجموعة النقاش المرتبطة بالقناة.
+    يجرب ثلاث طرق بالتسلسل:
+      1. reply_to_message_id (يعمل مع بعض إعدادات Telegram)
+      2. message_thread_id   (للمجموعات المرتبطة بالقنوات كـ forum topics)
+      3. إرسال حر بدون ربط  (دائماً ينجح إذا كان البوت عضواً في المجموعة)
     """
     if not GROQ_AVAILABLE or not GROQ_API_KEY:
         return
 
     group_id = await get_discussion_group_id(bot)
     if not group_id:
-        print("[groq_comment] لا توجد مجموعة نقاش — تم التخطي")
+        print("[groq_comment] ⚠️ لا توجد مجموعة نقاش — تم التخطي")
         return
 
-    comment_text = await asyncio.to_thread(_sync_groq_generate_comment, post_text or "منشور أنثروبولوجي")
+    comment_text = await asyncio.to_thread(
+        _sync_groq_generate_comment, post_text or "منشور أنثروبولوجي"
+    )
     if not comment_text:
         print("[groq_comment] ❌ Groq لم يُولّد تعليقاً")
         return
 
+    plain = _strip_markdown(comment_text)
+
+    # ── محاولة 1: reply_to_message_id + Markdown ──────────────────────────────
     try:
         await bot.send_message(
             chat_id=group_id,
@@ -351,18 +359,30 @@ async def post_groq_comment(bot, channel_message_id: int, post_text: str = "") -
             reply_to_message_id=channel_message_id,
             parse_mode="Markdown",
         )
-        print(f"[groq_comment] ✅ تعليق نُشر على المنشور {channel_message_id}")
+        print(f"[groq_comment] ✅ تعليق نُشر (reply) على {channel_message_id}")
+        return
     except Exception as e:
-        # محاولة بدون Markdown
-        try:
-            await bot.send_message(
-                chat_id=group_id,
-                text=_strip_markdown(comment_text),
-                reply_to_message_id=channel_message_id,
-            )
-            print(f"[groq_comment] ✅ تعليق نُشر (بدون Markdown) على {channel_message_id}")
-        except Exception as e2:
-            print(f"[groq_comment] ❌ فشل: {e2}")
+        print(f"[groq_comment try1] {e}")
+
+    # ── محاولة 2: message_thread_id (للمجموعات المربوطة بالقناة كـ forum) ──────
+    try:
+        await bot.send_message(
+            chat_id=group_id,
+            text=comment_text,
+            message_thread_id=channel_message_id,
+            parse_mode="Markdown",
+        )
+        print(f"[groq_comment] ✅ تعليق نُشر (thread) على {channel_message_id}")
+        return
+    except Exception as e:
+        print(f"[groq_comment try2] {e}")
+
+    # ── محاولة 3: إرسال حر بدون ربط (دائماً ينجح) ────────────────────────────
+    try:
+        await bot.send_message(chat_id=group_id, text=plain)
+        print(f"[groq_comment] ✅ تعليق نُشر (حر) في المجموعة")
+    except Exception as e:
+        print(f"[groq_comment try3] ❌ فشل كل المحاولات: {e}")
 
 
 async def send_rich_post(bot, post: dict, extra_header: str = ""):
@@ -743,21 +763,30 @@ async def subscription_callback(update: Update, context: ContextTypes.DEFAULT_TY
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    not_joined = await check_all_subscriptions(context.bot, user_id)
-    if not_joined:
-        await send_subscription_gate(update, not_joined)
-        return
+    try:
+        user_id = update.effective_user.id
+        not_joined = await check_all_subscriptions(context.bot, user_id)
+        if not_joined:
+            await send_subscription_gate(update, not_joined)
+            return
 
-    context.user_data["opened_section"] = None
-    text = (
-        "🌍 *مرحباً بك في بوت أثر الأنثروبولوجيا!*\n\n"
-        "استكشف علم الإنسان العالمي والجزائري من خلال الأزرار أدناه.\n"
-        "📢 *القناة:* @Athar_Anthro تنشر تلقائياً 3 مرات يومياً مع صور!\n"
-        "🤖 *جديد:* مقالات علمية حصرية كل ساعة من أحدث الأبحاث العالمية!\n\n"
-        "👇 اختر من لوحة الأزرار:"
-    )
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=get_reply_keyboard())
+        context.user_data["opened_section"] = None
+        # لا نستخدم Markdown هنا لتجنب أخطاء التحليل بسبب الرموز الخاصة
+        text = (
+            "🌍 مرحباً بك في بوت أثر الأنثروبولوجيا!\n\n"
+            "استكشف علم الإنسان العالمي والجزائري من خلال الأزرار أدناه.\n"
+            "📢 القناة @Athar_Anthro تنشر تلقائياً 3 مرات يومياً مع صور!\n"
+            "🤖 جديد: مقالات علمية حصرية كل 30 دقيقة من أحدث الأبحاث العالمية!\n\n"
+            "👇 اختر من لوحة الأزرار:"
+        )
+        await update.message.reply_text(text, reply_markup=get_reply_keyboard())
+    except Exception as e:
+        print(f"[start_handler] ❌ خطأ غير متوقع: {e}")
+        try:
+            await update.message.reply_text("مرحباً! اضغط على أحد الأزرار للبدء 👇",
+                                            reply_markup=get_reply_keyboard())
+        except Exception as e2:
+            print(f"[start_handler] ❌ فشل الرد الاحتياطي: {e2}")
 
 async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """أمر /post — ينشر فوراً في القناة بصورة."""
