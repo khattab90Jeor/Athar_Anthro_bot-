@@ -887,7 +887,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             f"• منشور الصباح:  🌅 09:00 (معلومة + صورة)\n"
             f"• منشور الظهر:   🔍 15:00 (اقتباس علمي)\n"
             f"• منشور المساء:  🌙 21:00 (معلومة + صورة)\n"
-            f"• 🤖 مقالات AI:  كل ساعة من Phys.org\n"
+            f"• 🤖 مقالات AI:  كل 30 دقيقة من Phys.org\n"
             f"• 💬 تعليقات AI: تلقائية على كل منشور\n"
             f"• Groq API: {groq_status}\n"
             f"• إجمالي المنشورات المتاحة: {len(content.DAILY_POSTS)} منشوراً\n"
@@ -938,17 +938,20 @@ def main():
         print("🤖 جدولة AI مفعّلة — مقال Phys.org كل 30 دقيقة")
 
     # ── تسجيل المعالجات ──
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("post",  post_now))
+    # نقيّد الأوامر والرسائل بالمحادثات الخاصة فقط حتى لا يتدخل البوت في المجموعات
+    private_filter = filters.ChatType.PRIVATE
+
+    app.add_handler(CommandHandler("start", start,    filters=private_filter))
+    app.add_handler(CommandHandler("post",  post_now, filters=private_filter))
     app.add_handler(CallbackQueryHandler(subscription_callback, pattern="^check_sub$"))
 
-    # معالج منشورات القناة للتعليقات التلقائية (فقط إذا توفر Groq)
-    if ai_ready:
-        app.add_handler(MessageHandler(filters.ChatType.CHANNEL, handle_channel_post))
-        print("💬 تعليقات AI التلقائية مفعّلة")
-
-    # معالج رسائل المستخدمين العادية
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # معالج رسائل المستخدمين — محادثات خاصة فقط
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & private_filter,
+        handle_message
+    ))
+    # ملاحظة: تعليقات AI تُرسَل مباشرة من post_groq_comment بعد كل نشر
+    # ولا حاجة لمعالج handle_channel_post
 
     print("🚀 البوت يعمل — قناة @Athar_Anthro جاهزة 💚")
     print(f"📅 الجدولة: 09:00 | 15:00 | 21:00 جزائر{' + AI كل 30 دقيقة' if ai_ready else ''}")
