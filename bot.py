@@ -13,7 +13,7 @@ import content
 TOKEN = os.getenv("TELEGRAM_TOKEN", "ضع_التوكن_هنا_إذا_كنت_تجرب_على_الحاسوب_محليا")
 
 # 📢 jl vf' hgf,j lfhavm frkhm .,j; hgthqgl ikh
-CHANNEL_USERNAME = "@Athar_Dz_Islamic"
+CHANNEL_USERNAME = "@Athar_Anthro"
 
 # phgm fkh_ hgH.vhv hgusgdm dhog prg hg;jhfm
 def get_reply_keyboard(opened_section=None):
