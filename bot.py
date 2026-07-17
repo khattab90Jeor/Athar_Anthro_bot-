@@ -120,6 +120,21 @@ async def send_daily_fact(context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         print(f"خطأ أثناء النشر في القناة: {e}")
 
+# أمر /post لاختبار النشر الفوري في القناة
+async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    fact = random.choice(content.RANDOM_FACTS)
+    broadcast_text = (
+        f"📢 *معلومة أنثروبولوجية يومية:*\n\n"
+        f"{fact}\n\n"
+        f"✨ تابعوا قناتنا للمزيد من أسرار علم الإنسان!"
+    )
+    try:
+        await context.bot.send_message(chat_id=CHANNEL_USERNAME, text=broadcast_text, parse_mode='Markdown')
+        await update.message.reply_text(f"✅ تم النشر بنجاح في القناة {CHANNEL_USERNAME}!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ فشل النشر في القناة:\n`{e}`", parse_mode='Markdown')
+        print(f"خطأ أثناء النشر اليدوي: {e}")
+
 # تشغيل البوت والجدولة
 def main():
     if not TOKEN or TOKEN == "ضع_التوكن_هنا_إذا_كنت_تجرب_على_الحاسوب_محليا":
@@ -136,6 +151,7 @@ def main():
 
     # تسجيل الأوامر والرسائل
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("post", post_now))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("🚀 البوت والجدولة لقناة زوجتك يعملان الآن بنجاح...")
