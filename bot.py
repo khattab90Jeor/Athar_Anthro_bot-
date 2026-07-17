@@ -81,34 +81,81 @@ def get_reply_keyboard(opened_section=None):
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 # ── إرسال منشور ثري (نص + صورة) إلى القناة ──────────────────────────────────
+def _strip_markdown(text: str) -> str:
+    """يُزيل رموز Markdown للإرسال كنص عادي عند الحاجة."""
+    return text.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
+
 async def send_rich_post(bot, post: dict, extra_header: str = "") -> bool:
     """
     يرسل منشوراً كاملاً (نص + صورة) إلى القناة.
-    يعود بـ True عند النجاح.
+    يجرب عدة طرق تدريجياً حتى ينجح أحدها.
     """
-    text      = extra_header + post["text"]
+    text = extra_header + post["text"]
     wiki_title = post.get("wiki_title", "")
-    image_url  = fetch_wiki_image(wiki_title) if wiki_title else None
-    img_bytes  = fetch_image_bytes(image_url) if image_url else None
 
+    # — جلب الصورة —
+    img_bytes = None
     try:
-        if img_bytes:
+        if wiki_title:
+            image_url = fetch_wiki_image(wiki_title)
+            if image_url:
+                img_bytes = fetch_image_bytes(image_url)
+                # Telegram يرفض الصور فوق 10 ميغا
+                if img_bytes and len(img_bytes) > 9 * 1024 * 1024:
+                    img_bytes = None
+    except Exception as e:
+        print(f"[image_fetch] {e}")
+        img_bytes = None
+
+    caption = text[:1024]  # حد Telegram للتعليقات على الصور
+
+    # المحاولة 1: صورة + Markdown
+    if img_bytes:
+        try:
             await bot.send_photo(
                 chat_id=CHANNEL_USERNAME,
                 photo=img_bytes,
-                caption=text,
+                caption=caption,
                 parse_mode="Markdown",
             )
-        else:
-            await bot.send_message(
+            return True
+        except Exception as e:
+            print(f"[try1 photo+md] {e}")
+
+    # المحاولة 2: صورة بدون Markdown
+    if img_bytes:
+        try:
+            await bot.send_photo(
                 chat_id=CHANNEL_USERNAME,
-                text=text,
-                parse_mode="Markdown",
+                photo=img_bytes,
+                caption=_strip_markdown(caption),
             )
+            return True
+        except Exception as e:
+            print(f"[try2 photo] {e}")
+
+    # المحاولة 3: نص فقط + Markdown
+    try:
+        await bot.send_message(
+            chat_id=CHANNEL_USERNAME,
+            text=text,
+            parse_mode="Markdown",
+        )
         return True
     except Exception as e:
-        print(f"[send_rich_post] خطأ: {e}")
-        return False
+        print(f"[try3 text+md] {e}")
+
+    # المحاولة 4: نص عادي بدون أي تنسيق
+    try:
+        await bot.send_message(
+            chat_id=CHANNEL_USERNAME,
+            text=_strip_markdown(text),
+        )
+        return True
+    except Exception as e:
+        print(f"[try4 plain] {e}")
+
+    return False
 
 # ── قوالب المنشورات اليومية الثلاثة ─────────────────────────────────────────
 MORNING_HEADER = (
