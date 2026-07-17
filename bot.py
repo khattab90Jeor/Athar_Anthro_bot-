@@ -124,22 +124,23 @@ def main():
         print("خطأ: يرجى إعداد متغير البيئة TELEGRAM_TOKEN")
         return
 
-    # بناء التطبيق مع تفعيل كافة الإضافات والـ Rate Limiter بنجاح
+    # بناء التطبيق مضافاً إليه محدد الطلبات بشكل مستقل ومباشر
     application = ApplicationBuilder().token(TOKEN).rate_limiter(AIORateLimiter()).build()
     
-    # ربط وتثبيت مواعيد الجدولة اليومية
-    application.job_queue.run_daily(send_daily_fact, time=datetime.time(hour=9, minute=0, second=0))
-    application.job_queue.run_daily(send_daily_fact, time=datetime.time(hour=15, minute=0, second=0))
-    application.job_queue.run_daily(send_daily_fact, time=datetime.time(hour=21, minute=0, second=0))
+    # ربط الجدولة اليومية
+    if application.job_queue:
+        application.job_queue.run_daily(send_daily_fact, time=datetime.time(hour=9, minute=0, second=0))
+        application.job_queue.run_daily(send_daily_fact, time=datetime.time(hour=15, minute=0, second=0))
+        application.job_queue.run_daily(send_daily_fact, time=datetime.time(hour=21, minute=0, second=0))
 
-    # إضافة معالجات الأوامر والرسائل
+    # إضافة المعالجات
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("post", test_post))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 البوت مستقر تماماً ويعمل بنظام الجدولة على ريلواي...")
+    print("🚀 البوت مستقر ويعمل بنظام الجدولة على ريلواي...")
     application.run_polling()
 
 if __name__ == '__main__':
     main()
-                    
+    
