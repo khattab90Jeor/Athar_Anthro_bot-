@@ -10,8 +10,19 @@ import requests
 import urllib.parse
 import content
 
-from bs4 import BeautifulSoup
-from groq import Groq
+try:
+    from bs4 import BeautifulSoup
+    BS4_AVAILABLE = True
+except ImportError:
+    BS4_AVAILABLE = False
+    print("⚠️ [تحذير] beautifulsoup4 غير مثبّت — ميزة Phys.org معطّلة")
+
+try:
+    from groq import Groq
+    GROQ_AVAILABLE = True
+except ImportError:
+    GROQ_AVAILABLE = False
+    print("⚠️ [تحذير] groq غير مثبّت — ميزات الذكاء الاصطناعي معطّلة")
 
 from telegram import (
     ReplyKeyboardMarkup,
@@ -35,12 +46,14 @@ CHANNEL_USERNAME = "@Athar_Anthro"
 GROQ_API_KEY     = os.getenv("GROQ_API_KEY", "")
 
 # ── عميل Groq ─────────────────────────────────────────────────────────────────
-_groq_client: Groq | None = None
+_groq_client = None  # Groq | None
 
-def get_groq_client() -> Groq | None:
+def get_groq_client():
     """يُنشئ عميل Groq مرة واحدة ويُعيد استخدامه."""
     global _groq_client
-    if _groq_client is None and GROQ_API_KEY:
+    if not GROQ_AVAILABLE or not GROQ_API_KEY:
+        return None
+    if _groq_client is None:
         _groq_client = Groq(api_key=GROQ_API_KEY)
     return _groq_client
 
@@ -110,6 +123,9 @@ def _sync_scrape_latest_phys_article() -> dict | None:
     يُعيد dict يحتوي: url, title, summary, image_url
     أو None عند الفشل.
     """
+    if not BS4_AVAILABLE:
+        print("[phys_scrape] beautifulsoup4 غير متوفر")
+        return None
     try:
         resp = requests.get(PHYS_ORG_URL, timeout=15, headers=HEADERS_SCRAPER)
         if resp.status_code != 200:
@@ -412,6 +428,10 @@ async def scrape_and_publish_ai_article(context: ContextTypes.DEFAULT_TYPE) -> N
     يمنع تكرار نشر نفس المقال باستخدام ذاكرة المتغير _last_published_article_url.
     """
     global _last_published_article_url
+
+    if not BS4_AVAILABLE or not GROQ_AVAILABLE or not GROQ_API_KEY:
+        print("[ai_scraper] ⏭️ مكتبات AI أو GROQ_API_KEY غير متوفرة، تم التخطي")
+        return
 
     print("[ai_scraper] 🔄 بدء سحب مقال من Phys.org ...")
 
@@ -814,8 +834,13 @@ def main():
         print("❌ خطأ: يرجى إعداد متغير البيئة TELEGRAM_TOKEN")
         return
 
+    ai_ready = BS4_AVAILABLE and GROQ_AVAILABLE and bool(GROQ_API_KEY)
     if not GROQ_API_KEY:
         print("⚠️  تنبيه: GROQ_API_KEY غير مضبوط — ميزات الذكاء الاصطناعي معطّلة")
+    if not BS4_AVAILABLE:
+        print("⚠️  تنبيه: beautifulsoup4 غير مثبّت — سحب Phys.org معطّل")
+    if not GROQ_AVAILABLE:
+        print("⚠️  تنبيه: groq غير مثبّت — ميزات الذكاء الاصطناعي معطّلة")
 
     app = Application.builder().token(TOKEN).build()
     jq  = app.job_queue
@@ -827,26 +852,30 @@ def main():
     jq.run_daily(noon_post,    time=datetime.time(hour=14, minute=0))   # 15:00 جزائر
     jq.run_daily(evening_post, time=datetime.time(hour=20, minute=0))   # 21:00 جزائر
 
-    # ── الجدولة المستقلة للذكاء الاصطناعي — كل ساعة ──
-    jq.run_repeating(
-        scrape_and_publish_ai_article,
-        interval=3600,   # كل 3600 ثانية = ساعة واحدة
-        first=120,       # تأخير دقيقتين قبل أول تشغيل عند إقلاع البوت
-    )
+    # ── الجدولة المستقلة للذكاء الاصطناعي — كل ساعة (فقط إذا توفرت المكتبات) ──
+    if ai_ready:
+        jq.run_repeating(
+            scrape_and_publish_ai_article,
+            interval=3600,   # كل 3600 ثانية = ساعة واحدة
+            first=120,       # تأخير دقيقتين قبل أول تشغيل عند إقلاع البوت
+        )
+        print("🤖 جدولة AI مفعّلة — مقال Phys.org كل ساعة")
 
     # ── تسجيل المعالجات ──
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("post",  post_now))
     app.add_handler(CallbackQueryHandler(subscription_callback, pattern="^check_sub$"))
 
-    # معالج منشورات القناة للتعليقات التلقائية
-    app.add_handler(MessageHandler(filters.ChatType.CHANNEL, handle_channel_post))
+    # معالج منشورات القناة للتعليقات التلقائية (فقط إذا توفر Groq)
+    if ai_ready:
+        app.add_handler(MessageHandler(filters.ChatType.CHANNEL, handle_channel_post))
+        print("💬 تعليقات AI التلقائية مفعّلة")
 
     # معالج رسائل المستخدمين العادية
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("🚀 البوت يعمل — قناة @Athar_Anthro جاهزة 💚")
-    print("📅 الجدولة: 09:00 | 15:00 | 21:00 جزائر + مقال AI كل ساعة")
+    print(f"📅 الجدولة: 09:00 | 15:00 | 21:00 جزائر{'+ AI كل ساعة' if ai_ready else ''}")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
