@@ -299,18 +299,37 @@ async def scrape_and_publish(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def _is_channel_forward(msg) -> bool:
     """
-    يتحقق إذا كانت الرسالة إعادة توجيه من قناتنا.
-    يدعم واجهة Telegram القديمة (forward_from_chat)
-    والجديدة (forward_origin).
+    يتحقق إذا كانت الرسالة منشور قناة أُعيد توجيهه تلقائياً للمجموعة المرتبطة.
+
+    الحالات الثلاث الممكنة في Telegram API:
+      1. is_automatic_forward=True + sender_chat  ← المنشورات التلقائية (الأشيع)
+      2. forward_from_chat                        ← توجيه يدوي قديم
+      3. forward_origin.chat                      ← PTB 21+ توجيه يدوي جديد
     """
-    # واجهة قديمة
+    # ① الحالة الأشيع: منشور قناة أُعيد تلقائياً للمجموعة المرتبطة
+    if getattr(msg, "is_automatic_forward", False):
+        sender_chat = getattr(msg, "sender_chat", None)
+        if sender_chat:
+            username = (getattr(sender_chat, "username", "") or "").lower()
+            # تحقق صريح أن المصدر هو قناتنا
+            if username == CHANNEL_NAME_LOWER:
+                return True
+            # إذا لم نتعرف على اسم المستخدم، نقبل المنشور على كل حال
+            # (لأن is_automatic_forward يأتي فقط من القناة المرتبطة بالمجموعة)
+            if not username:
+                return True
+        else:
+            # لا sender_chat لكن is_automatic_forward مضبوط → نقبل
+            return True
+
+    # ② واجهة توجيه يدوي قديمة
     fwd_chat = getattr(msg, "forward_from_chat", None)
     if fwd_chat:
         username = (getattr(fwd_chat, "username", "") or "").lower()
         if username == CHANNEL_NAME_LOWER:
             return True
 
-    # واجهة جديدة (PTB 21+)
+    # ③ واجهة PTB 21+ للتوجيه اليدوي
     fwd_origin = getattr(msg, "forward_origin", None)
     if fwd_origin:
         origin_chat = getattr(fwd_origin, "chat", None)
@@ -386,7 +405,31 @@ def main():
     app.add_handler(MessageHandler(group_filter, handle_group_message))
 
     print(f"🤖 ai_bot.py يعمل — يراقب مجموعة النقاش لقناة {CHANNEL_USERNAME}")
-    app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+
+    # إعادة محاولة تلقائية عند Conflict (نسختان تعملان في آنٍ واحد أثناء إعادة النشر)
+    import time
+    for attempt in range(1, 6):
+        try:
+            app.run_polling(
+                drop_pending_updates=True,
+                allowed_updates=Update.ALL_TYPES,
+            )
+            break
+        except Exception as e:
+            msg_str = str(e)
+            if "Conflict" in msg_str:
+                wait = attempt * 15  # 15 ثانية، 30، 45، 60، 75
+                print(f"[ai_bot] ⚠️ Conflict — محاولة {attempt}/5، انتظار {wait}ث ...")
+                time.sleep(wait)
+                # أعد بناء التطبيق لتجنب حالة قديمة
+                app = Application.builder().token(AI_BOT_TOKEN).build()
+                jq = app.job_queue
+                if BS4_AVAILABLE and GROQ_API_KEY:
+                    jq.run_repeating(scrape_and_publish, interval=1800, first=60)
+                app.add_handler(MessageHandler(group_filter, handle_group_message))
+            else:
+                print(f"[ai_bot] ❌ خطأ غير متوقع: {e}")
+                raise
 
 if __name__ == "__main__":
     main()
