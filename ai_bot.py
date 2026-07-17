@@ -1,16 +1,18 @@
-# ai_bot.py — البوت الذكي المستقل
-# وظائفه:
-#   1. الاستماع لمجموعة النقاش والرد بتعليق Groq على منشورات القناة المُعاد توجيهها
-#   2. نشر مقالات Phys.org مترجمة كل 30 دقيقة في القناة
+# ai_bot.py — البوت الذكي المستقل لقناة أثر الأنثروبولوجيا
+#
+# الوظائف:
+#   1. الرد على رسائل /start والمحادثات الخاصة بذكاء اصطناعي أنثروبولوجي
+#   2. الاستماع لمجموعة النقاش والرد تلقائياً على منشورات القناة بتعليق Groq
+#   3. نشر مقالات Phys.org مترجمة كل 30 دقيقة في القناة
 #
 # متغيرات البيئة المطلوبة:
-#   AI_BOT_TOKEN  — توكن البوت الذكي (مختلف عن TELEGRAM_TOKEN)
-#   GROQ_API_KEY  — مفتاح Groq
+#   AI_BOT_TOKEN     — توكن البوت الذكي (مختلف عن TELEGRAM_TOKEN)
+#   GROQ_API_KEY     — مفتاح Groq
 #   CHANNEL_USERNAME — اختياري، الافتراضي: @Athar_Anthro
 
 import os
 import asyncio
-import datetime
+import time
 import requests
 
 try:
@@ -30,23 +32,24 @@ except ImportError:
 from telegram import Update
 from telegram.ext import (
     Application,
+    CommandHandler,
     MessageHandler,
     filters,
     ContextTypes,
 )
 
-# ── إعدادات ────────────────────────────────────────────────────────────────────
-AI_BOT_TOKEN     = os.getenv("AI_BOT_TOKEN", "")
-GROQ_API_KEY     = os.getenv("GROQ_API_KEY", "")
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@Athar_Anthro")
-CHANNEL_NAME_LOWER = CHANNEL_USERNAME.lstrip("@").lower()  # "athar_anthro"
+# ── إعدادات ─────────────────────────────────────────────────────────────────
+AI_BOT_TOKEN       = os.getenv("AI_BOT_TOKEN", "")
+GROQ_API_KEY       = os.getenv("GROQ_API_KEY", "")
+CHANNEL_USERNAME   = os.getenv("CHANNEL_USERNAME", "@Athar_Anthro")
+CHANNEL_NAME_LOWER = CHANNEL_USERNAME.lstrip("@").lower()
 
-# ── ذاكرة ─────────────────────────────────────────────────────────────────────
-_groq_client = None
-_last_published_url: str = ""
+# ── ذاكرة ────────────────────────────────────────────────────────────────────
+_groq_client: "Groq | None" = None
+_last_published_url: str    = ""
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ── عميل Groq ─────────────────────────────────────────────────────────────────
+# ── عميل Groq ────────────────────────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_groq_client():
@@ -58,11 +61,36 @@ def get_groq_client():
     return _groq_client
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ── وظائف Groq (sync) ─────────────────────────────────────────────────────────
+# ── وظائف Groq (sync — تُستدعى من asyncio.to_thread) ────────────────────────
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _sync_answer_question(user_text: str) -> str:
+    """يُجيب على سؤال مباشر من المستخدم في المحادثة الخاصة."""
+    client = get_groq_client()
+    if not client:
+        return "⚠️ خدمة الذكاء الاصطناعي غير متاحة حالياً، تحقق من GROQ_API_KEY."
+    prompt = (
+        "أنت أستاذ متخصص في علم الإنسان (الأنثروبولوجيا) وعلم الآثار، "
+        "تعمل مساعداً ذكياً لقناة تيليغرام أنثروبولوجية عربية. "
+        "أسلوبك: علمي دقيق مع لمسة إنسانية دافئة، تستشهد بأمثلة وحضارات حقيقية.\n\n"
+        f"سؤال المستخدم: {user_text}\n\n"
+        "أجب بالعربية الفصحى في 80 إلى 150 كلمة، مباشرةً دون مقدمة."
+    )
+    try:
+        resp = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=350,
+            temperature=0.75,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"[groq_answer] ❌ {e}")
+        return "❌ تعذّر الحصول على إجابة، حاول مرة أخرى."
+
+
 def _sync_generate_comment(post_text: str) -> str | None:
-    """يُولّد تعليقاً أنثروبولوجياً ذكياً على منشور القناة."""
+    """يُولّد تعليقاً أنثروبولوجياً ذكياً على منشور القناة في المجموعة."""
     client = get_groq_client()
     if not client:
         return None
@@ -88,6 +116,7 @@ def _sync_generate_comment(post_text: str) -> str | None:
     except Exception as e:
         print(f"[groq_comment] ❌ {e}")
         return None
+
 
 def _sync_translate_article(title: str, summary: str) -> str | None:
     """يُترجم مقالاً علمياً إلى منشور أنثروبولوجي عربي."""
@@ -140,6 +169,7 @@ def _sync_fetch_image(url: str) -> bytes | None:
     except Exception as e:
         print(f"[fetch_image] {e}")
     return None
+
 
 def _sync_scrape_phys_article() -> dict | None:
     if not BS4_AVAILABLE:
@@ -198,22 +228,27 @@ def _sync_scrape_phys_article() -> dict | None:
                 image_url = src
                 break
 
-        return {"url": article_link, "title": article_title,
-                "summary": summary[:2000], "image_url": image_url}
+        return {
+            "url": article_link,
+            "title": article_title,
+            "summary": summary[:2000],
+            "image_url": image_url,
+        }
 
     except Exception as e:
         print(f"[phys_scrape] ❌ {e}")
         return None
 
+
 def _strip_md(text: str) -> str:
     return text.replace("*", "").replace("_", "").replace("`", "").replace("[", "").replace("]", "")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ── مهمة النشر المجدولة ───────────────────────────────────────────────────────
+# ── مهمة النشر المجدولة ──────────────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════════════
 
 async def scrape_and_publish(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """تُشغَّل كل 30 دقيقة. تسحب مقالاً جديداً وتنشره في القناة."""
+    """تُشغَّل كل 30 دقيقة — تسحب مقالاً جديداً وتنشره في القناة."""
     global _last_published_url
 
     if not GROQ_API_KEY:
@@ -254,7 +289,6 @@ async def scrape_and_publish(context: ContextTypes.DEFAULT_TYPE) -> None:
 
     published = False
 
-    # محاولة مع صورة المقال
     image_url = article.get("image_url")
     if image_url:
         img_bytes = await asyncio.to_thread(_sync_fetch_image, image_url)
@@ -268,7 +302,6 @@ async def scrape_and_publish(context: ContextTypes.DEFAULT_TYPE) -> None:
             except Exception as e:
                 print(f"[ai_scraper photo] {e}")
 
-    # محاولة نص فقط
     if not published:
         try:
             await context.bot.send_message(chat_id=CHANNEL_USERNAME, text=full_text)
@@ -277,7 +310,6 @@ async def scrape_and_publish(context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception as e:
             print(f"[ai_scraper text] {e}")
 
-    # محاولة نص مقتصر
     if not published:
         try:
             await context.bot.send_message(
@@ -294,42 +326,78 @@ async def scrape_and_publish(context: ContextTypes.DEFAULT_TYPE) -> None:
         print("[ai_scraper] ❌ فشل النشر")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ── معالج رسائل مجموعة النقاش ────────────────────────────────────────────────
+# ── معالجات المحادثة الخاصة ──────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+
+START_TEXT = (
+    "مرحباً بك! 👋\n\n"
+    "أنا *أثر الذكي* — مساعدك الأنثروبولوجي الذكي لقناة *أثر الأنثروبولوجيا*.\n\n"
+    "🔬 *ما الذي أفعله؟*\n"
+    "• أرد على أسئلتك في علم الإنسان والآثار والحضارات\n"
+    "• أُعلّق تلقائياً على منشورات القناة في مجموعة النقاش\n"
+    "• أنشر اكتشافات علمية جديدة مترجمة كل 30 دقيقة في القناة\n\n"
+    "💬 *كيف تستخدمني؟*\n"
+    "اكتب سؤالك أو موضوعاً تريد معرفة المزيد عنه وسأجيبك فوراً!\n\n"
+    f"📡 تابع القناة: {CHANNEL_USERNAME}"
+)
+
+async def handle_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """يرد على /start في المحادثة الخاصة."""
+    await update.message.reply_text(START_TEXT, parse_mode="Markdown")
+
+
+async def handle_private_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """يرد على أي رسالة خاصة بذكاء اصطناعي أنثروبولوجي."""
+    msg = update.message
+    if not msg or not msg.text:
+        await msg.reply_text("أرسل سؤالاً نصياً وسأجيبك! 🔬")
+        return
+
+    user_text = msg.text.strip()
+    print(f"[private_handler] 💬 سؤال: {user_text[:80]}")
+
+    # مؤشر الكتابة
+    await context.bot.send_chat_action(
+        chat_id=msg.chat_id, action="typing"
+    )
+
+    answer = await asyncio.to_thread(_sync_answer_question, user_text)
+    await msg.reply_text(answer)
+    print(f"[private_handler] ✅ أجاب على: {user_text[:40]}")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ── معالج مجموعة النقاش — الرد على منشورات القناة ───────────────────────────
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _is_channel_forward(msg) -> bool:
     """
-    يتحقق إذا كانت الرسالة منشور قناة أُعيد توجيهه تلقائياً للمجموعة المرتبطة.
+    يتحقق إذا كانت الرسالة منشور قناة أُعيد توجيهه للمجموعة المرتبطة.
 
-    الحالات الثلاث الممكنة في Telegram API:
-      1. is_automatic_forward=True + sender_chat  ← المنشورات التلقائية (الأشيع)
-      2. forward_from_chat                        ← توجيه يدوي قديم
-      3. forward_origin.chat                      ← PTB 21+ توجيه يدوي جديد
+    الحالات المدعومة:
+      ① is_automatic_forward=True + sender_chat  ← منشورات القناة التلقائية (الأشيع)
+      ② forward_from_chat                        ← توجيه يدوي قديم
+      ③ forward_origin.chat                      ← PTB 21+ توجيه يدوي جديد
     """
-    # ① الحالة الأشيع: منشور قناة أُعيد تلقائياً للمجموعة المرتبطة
+    # ① الحالة الأشيع: إعادة توجيه تلقائية للمجموعة المرتبطة بالقناة
     if getattr(msg, "is_automatic_forward", False):
         sender_chat = getattr(msg, "sender_chat", None)
         if sender_chat:
             username = (getattr(sender_chat, "username", "") or "").lower()
-            # تحقق صريح أن المصدر هو قناتنا
             if username == CHANNEL_NAME_LOWER:
                 return True
-            # إذا لم نتعرف على اسم المستخدم، نقبل المنشور على كل حال
-            # (لأن is_automatic_forward يأتي فقط من القناة المرتبطة بالمجموعة)
             if not username:
-                return True
+                return True   # لا يمكن التحقق من الاسم → نقبل (المصدر تلقائي)
         else:
-            # لا sender_chat لكن is_automatic_forward مضبوط → نقبل
-            return True
+            return True       # is_automatic_forward بدون sender_chat → نقبل
 
-    # ② واجهة توجيه يدوي قديمة
+    # ② توجيه يدوي — واجهة قديمة
     fwd_chat = getattr(msg, "forward_from_chat", None)
     if fwd_chat:
         username = (getattr(fwd_chat, "username", "") or "").lower()
         if username == CHANNEL_NAME_LOWER:
             return True
 
-    # ③ واجهة PTB 21+ للتوجيه اليدوي
+    # ③ توجيه يدوي — PTB 21+
     fwd_origin = getattr(msg, "forward_origin", None)
     if fwd_origin:
         origin_chat = getattr(fwd_origin, "chat", None)
@@ -340,6 +408,7 @@ def _is_channel_forward(msg) -> bool:
 
     return False
 
+
 async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     يستمع لمجموعة النقاش.
@@ -349,7 +418,7 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     if not msg:
         return
 
-    # تجاهل رسائل البوت نفسه
+    # تجاهل رسائل البوتات (بما فيها رسائل هذا البوت نفسه)
     if msg.from_user and msg.from_user.is_bot:
         return
 
@@ -359,12 +428,19 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
     post_text = msg.text or msg.caption or "منشور أنثروبولوجي"
     print(f"[group_handler] 📩 منشور قناة مُعاد توجيهه id={msg.message_id}")
 
+    # مؤشر الكتابة في المجموعة
+    try:
+        await context.bot.send_chat_action(
+            chat_id=msg.chat_id, action="typing"
+        )
+    except Exception:
+        pass
+
     comment = await asyncio.to_thread(_sync_generate_comment, post_text)
     if not comment:
         print("[group_handler] ❌ Groq لم يُولّد تعليقاً")
         return
 
-    # الرد على الرسالة المُعاد توجيهها مباشرة (message_id في المجموعة صحيح)
     try:
         await msg.reply_text(comment)
         print(f"[group_handler] ✅ تعليق نُشر ردًا على {msg.message_id}")
@@ -377,8 +453,32 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
             print(f"[group_handler] ❌ فشل كل المحاولات: {e2}")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ── تشغيل البوت الذكي ────────────────────────────────────────────────────────
+# ── تشغيل البوت ──────────────────────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════════════
+
+def _build_app() -> Application:
+    app = Application.builder().token(AI_BOT_TOKEN).build()
+    jq  = app.job_queue
+
+    # جدولة النشر كل 30 دقيقة
+    if BS4_AVAILABLE and GROQ_API_KEY:
+        jq.run_repeating(scrape_and_publish, interval=1800, first=60)
+        print("🤖 جدولة AI مفعّلة — مقال Phys.org كل 30 دقيقة")
+
+    # ── معالجات المحادثة الخاصة ─────────────────────────────────────────────
+    app.add_handler(CommandHandler("start", handle_start,
+                                   filters=filters.ChatType.PRIVATE))
+    app.add_handler(MessageHandler(
+        filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+        handle_private_message,
+    ))
+
+    # ── معالج مجموعة النقاش ─────────────────────────────────────────────────
+    group_filter = filters.ChatType.SUPERGROUP | filters.ChatType.GROUP
+    app.add_handler(MessageHandler(group_filter, handle_group_message))
+
+    return app
+
 
 def main():
     if not AI_BOT_TOKEN:
@@ -388,48 +488,26 @@ def main():
     if not GROQ_API_KEY:
         print("⚠️ GROQ_API_KEY غير مضبوط — ميزات AI معطّلة")
 
-    app = Application.builder().token(AI_BOT_TOKEN).build()
-    jq  = app.job_queue
+    print(f"🤖 ai_bot.py يبدأ — القناة: {CHANNEL_USERNAME}")
 
-    # جدولة النشر كل 30 دقيقة
-    if BS4_AVAILABLE and GROQ_API_KEY:
-        jq.run_repeating(
-            scrape_and_publish,
-            interval=1800,  # 30 دقيقة
-            first=60,       # دقيقة واحدة قبل أول تشغيل
-        )
-        print("🤖 جدولة AI مفعّلة — مقال Phys.org كل 30 دقيقة")
-
-    # الاستماع لمجموعات النقاش (supergroup)
-    group_filter = filters.ChatType.SUPERGROUP | filters.ChatType.GROUP
-    app.add_handler(MessageHandler(group_filter, handle_group_message))
-
-    print(f"🤖 ai_bot.py يعمل — يراقب مجموعة النقاش لقناة {CHANNEL_USERNAME}")
-
-    # إعادة محاولة تلقائية عند Conflict (نسختان تعملان في آنٍ واحد أثناء إعادة النشر)
-    import time
+    # إعادة محاولة تلقائية عند Conflict (نسختان في آنٍ واحد أثناء النشر)
     for attempt in range(1, 6):
+        app = _build_app()
         try:
             app.run_polling(
                 drop_pending_updates=True,
                 allowed_updates=Update.ALL_TYPES,
             )
-            break
+            break  # خرج بشكل طبيعي
         except Exception as e:
-            msg_str = str(e)
-            if "Conflict" in msg_str:
-                wait = attempt * 15  # 15 ثانية، 30، 45، 60، 75
+            if "Conflict" in str(e):
+                wait = attempt * 15
                 print(f"[ai_bot] ⚠️ Conflict — محاولة {attempt}/5، انتظار {wait}ث ...")
                 time.sleep(wait)
-                # أعد بناء التطبيق لتجنب حالة قديمة
-                app = Application.builder().token(AI_BOT_TOKEN).build()
-                jq = app.job_queue
-                if BS4_AVAILABLE and GROQ_API_KEY:
-                    jq.run_repeating(scrape_and_publish, interval=1800, first=60)
-                app.add_handler(MessageHandler(group_filter, handle_group_message))
             else:
-                print(f"[ai_bot] ❌ خطأ غير متوقع: {e}")
+                print(f"[ai_bot] ❌ خطأ: {e}")
                 raise
+
 
 if __name__ == "__main__":
     main()
