@@ -11,20 +11,35 @@ import content
 
 from telegram import (
     ReplyKeyboardMarkup,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
     Update,
     InputMediaPhoto,
 )
 from telegram.ext import (
     Application,
     CommandHandler,
+    CallbackQueryHandler,
     MessageHandler,
     filters,
     ContextTypes,
 )
 
 # ── إعدادات البوت ─────────────────────────────────────────────────────────────
-TOKEN           = os.getenv("TELEGRAM_TOKEN", "")
+TOKEN            = os.getenv("TELEGRAM_TOKEN", "")
 CHANNEL_USERNAME = "@Athar_Anthro"
+
+# ── قنوات وبوتات الاشتراك الإجباري ──────────────────────────────────────────
+# القنوات التي يمكن التحقق منها برمجياً
+REQUIRED_CHANNELS = [
+    {"username": "@Athar_Anthro",       "name": "📚 قناة أثر الأنثروبولوجيا",  "url": "https://t.me/Athar_Anthro"},
+    {"username": "@Athar_Dz_Islamic",   "name": "🕌 قناة أثر الإسلامية",        "url": "https://t.me/Athar_Dz_Islamic"},
+]
+# البوتات (لا يمكن التحقق منها، نضع أزرار فقط)
+REQUIRED_BOTS = [
+    {"name": "🌙 بوت الذبح والحنين",    "url": "https://t.me/Jeor_dhabh_h_a_n_i_n_bot"},
+    {"name": "🕊️ بوت المهاجرة لله",    "url": "https://t.me/Muhajira_for_Allah_bot"},
+]
 
 # ── جلب صورة من ويكيبيديا (async-safe عبر thread) ───────────────────────────
 def _sync_fetch_wiki_image(wiki_title: str) -> str | None:
@@ -221,8 +236,105 @@ async def evening_post(context: ContextTypes.DEFAULT_TYPE) -> None:
     ok = await send_rich_post(context.bot, post)
     print(f"[evening_post] {'✅ نُشر' if ok else '❌ فشل'}")
 
+# ══════════════════════════════════════════════════════════════════════════════
+# ── نظام الاشتراك الإجباري ────────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def is_subscribed(bot, user_id: int, channel_username: str) -> bool:
+    """يتحقق إذا كان المستخدم مشتركاً في القناة المطلوبة."""
+    try:
+        member = await bot.get_chat_member(chat_id=channel_username, user_id=user_id)
+        return member.status not in ("left", "kicked", "banned")
+    except Exception as e:
+        print(f"[is_subscribed] {channel_username}: {e}")
+        return False  # نعتبره غير مشترك عند الخطأ
+
+async def check_all_subscriptions(bot, user_id: int) -> list[dict]:
+    """يعيد قائمة القنوات التي لم يشترك فيها المستخدم بعد."""
+    not_joined = []
+    for ch in REQUIRED_CHANNELS:
+        if not await is_subscribed(bot, user_id, ch["username"]):
+            not_joined.append(ch)
+    return not_joined
+
+def get_subscription_keyboard(not_joined_channels: list[dict]) -> InlineKeyboardMarkup:
+    """يبني لوحة مفاتيح inline لكل القنوات والبوتات المطلوبة + زر التحقق."""
+    buttons = []
+    # أزرار القنوات التي لم يشترك فيها
+    for ch in not_joined_channels:
+        buttons.append([InlineKeyboardButton(ch["name"], url=ch["url"])])
+    # أزرار البوتات دائماً (لا يمكن التحقق منها، نعرضها للمستخدم)
+    for bot_info in REQUIRED_BOTS:
+        buttons.append([InlineKeyboardButton(bot_info["name"], url=bot_info["url"])])
+    # زر التحقق من الاشتراك
+    buttons.append([InlineKeyboardButton("✅ تحققت من اشتراكي", callback_data="check_sub")])
+    return InlineKeyboardMarkup(buttons)
+
+def get_all_channels_keyboard() -> InlineKeyboardMarkup:
+    """لوحة مفاتيح بكل القنوات والبوتات (للمستخدم الجديد كلياً)."""
+    buttons = []
+    for ch in REQUIRED_CHANNELS:
+        buttons.append([InlineKeyboardButton(ch["name"], url=ch["url"])])
+    for bot_info in REQUIRED_BOTS:
+        buttons.append([InlineKeyboardButton(bot_info["name"], url=bot_info["url"])])
+    buttons.append([InlineKeyboardButton("✅ تحققت من اشتراكي", callback_data="check_sub")])
+    return InlineKeyboardMarkup(buttons)
+
+async def send_subscription_gate(update: Update, not_joined: list[dict]) -> None:
+    """يرسل رسالة الاشتراك الإجباري مع الأزرار."""
+    names = "\n".join(f"  • {ch['name']}" for ch in not_joined)
+    text = (
+        "🔐 *مرحباً! للوصول إلى البوت يرجى الاشتراك أولاً في:*\n\n"
+        f"{names}\n\n"
+        "وكذلك تفعيل البوتين الشرعيين القرآنيين 👇\n\n"
+        "_بعد الاشتراك اضغط زر التحقق أدناه_ ✅"
+    )
+    await update.message.reply_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=get_subscription_keyboard(not_joined),
+    )
+
+async def subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """يعالج ضغطة زر 'تحققت من اشتراكي'."""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+
+    not_joined = await check_all_subscriptions(context.bot, user_id)
+
+    if not_joined:
+        # لا يزال هناك قنوات لم يشترك فيها
+        names = "\n".join(f"  • {ch['name']}" for ch in not_joined)
+        text = (
+            "❌ *لم تشترك في جميع القنوات بعد!*\n\n"
+            f"تبقّى عليك الاشتراك في:\n{names}\n\n"
+            "_اشترك ثم اضغط التحقق مجدداً_ 🔄"
+        )
+        await query.edit_message_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=get_subscription_keyboard(not_joined),
+        )
+    else:
+        # ✅ اشترك في كل شيء — افتح البوت
+        await query.edit_message_text(
+            "✅ *أهلاً وسهلاً! تم التحقق من اشتراكك.*\n\n"
+            "اضغط /start للبدء 🌍",
+            parse_mode="Markdown",
+        )
+
 # ── أوامر المستخدم ────────────────────────────────────────────────────────────
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+
+    # تحقق من الاشتراك
+    not_joined = await check_all_subscriptions(context.bot, user_id)
+    if not_joined:
+        await send_subscription_gate(update, not_joined)
+        return
+
+    # مشترك ✅ — عرض البوت
     context.user_data["opened_section"] = None
     text = (
         "🌍 *مرحباً بك في بوت أثر الأنثروبولوجيا!*\n\n"
@@ -308,6 +420,13 @@ async def post_now(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # تحقق من الاشتراك قبل أي تفاعل
+    user_id = update.effective_user.id
+    not_joined = await check_all_subscriptions(context.bot, user_id)
+    if not_joined:
+        await send_subscription_gate(update, not_joined)
+        return
+
     text_received = update.message.text
     current_opened = context.user_data.get("opened_section", None)
 
@@ -399,9 +518,10 @@ def main():
     jq.run_daily(noon_post,    time=datetime.time(hour=12, minute=0))   # 15:00 جزائر
     jq.run_daily(evening_post, time=datetime.time(hour=19, minute=0))   # 21:00 جزائر
 
-    # تسجيل الأوامر
+    # تسجيل الأوامر والمعالجات
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("post",  post_now))
+    app.add_handler(CallbackQueryHandler(subscription_callback, pattern="^check_sub$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     print("🚀 البوت يعمل — قناة زوجتي @Athar_Anthro جاهزة للنشر 💚")
