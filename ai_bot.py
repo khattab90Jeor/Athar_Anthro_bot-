@@ -456,7 +456,7 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
 # ── تشغيل البوت ──────────────────────────────────────────────────────────────
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _build_app() -> Application:
+def build_app() -> Application:
     app = Application.builder().token(AI_BOT_TOKEN).build()
     jq  = app.job_queue
 
@@ -492,7 +492,7 @@ def main():
 
     # إعادة محاولة تلقائية عند Conflict (نسختان في آنٍ واحد أثناء النشر)
     for attempt in range(1, 6):
-        app = _build_app()
+        app = build_app()
         try:
             app.run_polling(
                 drop_pending_updates=True,

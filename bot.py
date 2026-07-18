@@ -340,13 +340,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ── تشغيل البوت ──────────────────────────────────────────────────────────────
+# ── بناء تطبيق البوت (بدون تشغيل polling — يُستخدم من main.py) ───────────────
 # ══════════════════════════════════════════════════════════════════════════════
 
-def main():
+def build_app() -> Application:
+    """يبني ويُعيد Application جاهزاً بدون استدعاء run_polling."""
     if not TOKEN:
-        print("❌ TELEGRAM_TOKEN غير مضبوط")
-        return
+        raise RuntimeError("❌ TELEGRAM_TOKEN غير مضبوط")
 
     app = Application.builder().token(TOKEN).build()
     jq  = app.job_queue
@@ -362,8 +362,14 @@ def main():
     app.add_handler(CallbackQueryHandler(subscription_callback, pattern="^check_sub$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & private, handle_message))
 
+    return app
+
+
+# ── تشغيل مستقل (للاختبار المباشر) ──────────────────────────────────────────
+def main():
+    app = build_app()
     print("🚀 bot.py يعمل — جدولة: 09:00 | 15:00 | 21:00 جزائر")
-    app.run_polling(drop_pending_updates=False)
+    app.run_polling(drop_pending_updates=False, allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
     main()
