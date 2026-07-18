@@ -445,15 +445,15 @@ def _is_channel_forward(msg) -> bool:
 
 async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    يستمع لمجموعة النقاش.
-    عندما يرى منشوراً مُعاد توجيهه من القناة → يرد بتعليق Groq.
+    يستمع لمجموعة النقاش ويتعامل مع نوعين من الرسائل:
+      ① منشور القناة المُعاد توجيهه تلقائياً → تعليق أنثروبولوجي
+      ② رسالة مشترك عادي في المجموعة      → إجابة علمية كالخاص
     """
     try:
         msg = update.message
         if not msg:
             return
 
-        # سجّل كل رسالة في المجموعة لتسهيل التشخيص
         is_auto = getattr(msg, "is_automatic_forward", False)
         sender  = getattr(msg, "sender_chat", None)
         frm     = getattr(msg, "from_user", None)
@@ -463,50 +463,82 @@ async def handle_group_message(update: Update, context: ContextTypes.DEFAULT_TYP
             f"from={'bot' if (frm and frm.is_bot) else (frm.username if frm else '—')}"
         )
 
-        # تجاهل رسائل البوتات (بما فيها رسائل هذا البوت نفسه)
+        # تجاهل رسائل البوتات
         if frm and frm.is_bot:
             return
 
-        if not _is_channel_forward(msg):
-            print(f"[group_handler] ⏭️ ليست منشور قناة — تجاهل")
+        # ── ① منشور القناة ────────────────────────────────────────────────────
+        if _is_channel_forward(msg):
+            post_text = msg.text or msg.caption or "منشور أنثروبولوجي"
+            print(f"[group_handler] 📩 منشور قناة id={msg.message_id} نص={post_text[:60]}...")
+
+            try:
+                await context.bot.send_chat_action(chat_id=msg.chat_id, action="typing")
+            except Exception:
+                pass
+
+            try:
+                comment = await asyncio.wait_for(
+                    asyncio.to_thread(_sync_generate_comment, post_text),
+                    timeout=60.0
+                )
+            except asyncio.TimeoutError:
+                print("[group_handler] ⏱️ Groq تجاوز 60 ثانية")
+                return
+            except Exception as e:
+                print(f"[group_handler] ❌ خطأ Groq: {e}")
+                return
+
+            if not comment:
+                print("[group_handler] ❌ Groq لم يُولّد تعليقاً")
+                return
+
+            try:
+                await msg.reply_text(comment)
+                print(f"[group_handler] ✅ تعليق على منشور {msg.message_id}")
+            except Exception as e:
+                print(f"[group_handler] ⚠️ {e}")
+                try:
+                    await msg.reply_text(_strip_md(comment))
+                except Exception as e2:
+                    print(f"[group_handler] ❌ {e2}")
             return
 
-        post_text = msg.text or msg.caption or "منشور أنثروبولوجي"
-        print(f"[group_handler] 📩 منشور قناة id={msg.message_id} نص={post_text[:60]}...")
+        # ── ② رسالة مشترك عادي في المجموعة ──────────────────────────────────
+        user_text = msg.text or msg.caption
+        if not user_text:
+            return          # تجاهل الصور/الملفات بدون نص
 
-        # مؤشر الكتابة في المجموعة
+        user_text = user_text.strip()
+        username  = frm.first_name if frm else "مشترك"
+        print(f"[group_handler] 💬 سؤال مشترك «{username}»: {user_text[:80]}")
+
         try:
             await context.bot.send_chat_action(chat_id=msg.chat_id, action="typing")
         except Exception:
             pass
 
-        # استدعاء Groq مع timeout 60 ثانية
         try:
-            comment = await asyncio.wait_for(
-                asyncio.to_thread(_sync_generate_comment, post_text),
+            answer = await asyncio.wait_for(
+                asyncio.to_thread(_sync_answer_question, user_text),
                 timeout=60.0
             )
         except asyncio.TimeoutError:
             print("[group_handler] ⏱️ Groq تجاوز 60 ثانية")
-            return
+            answer = "⚠️ استغرقت الإجابة وقتاً طويلاً، حاول مجدداً."
         except Exception as e:
             print(f"[group_handler] ❌ خطأ Groq: {e}")
-            return
-
-        if not comment:
-            print("[group_handler] ❌ Groq لم يُولّد تعليقاً")
-            return
+            answer = "❌ تعذّر الحصول على إجابة، حاول مرة أخرى."
 
         try:
-            await msg.reply_text(comment)
-            print(f"[group_handler] ✅ تعليق نُشر على {msg.message_id}")
+            await msg.reply_text(answer)
+            print(f"[group_handler] ✅ رد على مشترك «{username}»")
         except Exception as e:
-            print(f"[group_handler] ⚠️ reply فشل: {e} — إعادة محاولة بدون تنسيق")
+            print(f"[group_handler] ⚠️ {e}")
             try:
-                await msg.reply_text(_strip_md(comment))
-                print("[group_handler] ✅ تعليق نُشر (بدون تنسيق)")
+                await msg.reply_text(_strip_md(answer))
             except Exception as e2:
-                print(f"[group_handler] ❌ فشل كل المحاولات: {e2}")
+                print(f"[group_handler] ❌ {e2}")
 
     except Exception as fatal:
         print(f"[group_handler] 💥 خطأ غير متوقع: {fatal}")
